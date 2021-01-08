@@ -41,6 +41,11 @@ app.get('/*', (req, res) => {
     }).then(result => {
       // Improve this: don't read everything into memory...
       return result.data
+    }).catch(error => {
+      // Failed to retrieve some data.  Not all servers will have the same data,
+      // so this doesn't have to be a fatal error, but log it for diagnostic purposes.
+      console.log(error)
+      return ''
     })
   })).then((results) => {
     res.setHeader('Content-Type', 'text/plain')
