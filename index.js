@@ -33,24 +33,56 @@ app.get('/*', (req, res) => {
   if(queryParams.length > 0) {
     urlTail += '?' + queryParams.join('&')
   }
-  Promise.all(servers.map(server => {
+  res.setHeader('Content-Type', 'text/plain')
+  Promise.all(servers.map((server) => {
     const url = 'http://' + server[0] + ':' + server[1] + urlTail
     return axios({
       method: 'GET',
-      url: url
+      url: url,
+      responseType: 'stream'
     }).then(result => {
-      // Improve this: don't read everything into memory...
-      return result.data
+      return copy(result.data, res)
     }).catch(error => {
       // Failed to retrieve some data.  Not all servers will have the same data,
       // so this doesn't have to be a fatal error, but log it for diagnostic purposes.
-      console.log(error)
+      console.log(error.message)
       return ''
     })
-  })).then((results) => {
-    res.setHeader('Content-Type', 'text/plain')
-    res.send(results.join('\n'))
+  })).then(() => {
+    res.end()
   })
 })
+
+// Copy data to response in chunks to avoid pulling entire responses into memory
+// This has to split the response into lines and retain the last line for sending with the next chunk,
+// since a chunk may include a partial line and we don't want to accidentally interleave
+// responses from two servers in the same line
+function copy(from, to) {
+  let outstanding = ''
+  return new Promise((resolve, reject) => {
+    from.on('data', (chunk) => {
+      const data = outstanding + chunk
+      const lines = data.split('\n')
+      if(lines && lines.length > 0) {
+        outstanding = lines.pop()
+      } else {
+        outstanding = ''
+      }
+      // Kind of hacky, but newlines between chunks get dropped, so we're adding one back in here
+      // There is a bit of a bug from this where the first request to start writing adds an extra newline
+      // so this could definitely be improved, but this prevents two log entries from showing up on the same line
+      to.write('\n'+lines.join('\n'))
+    })
+    from.on('end', () => {
+      if(outstanding && outstanding.length > 0) {
+        to.write(outstanding)
+      }
+      resolve()
+    })
+    from.on('error', (error) => {
+      reject(error)
+    })
+  })
+}
 
 app.listen(PORT)
